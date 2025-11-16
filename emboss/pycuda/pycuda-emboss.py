@@ -75,12 +75,14 @@ def generate_emboss_kernel(K):
 
 
 def load_image_grayscale(path):
+    """Carga imagen y la convierte a escala de grises"""
     img = Image.open(path).convert('L')
     img_array = np.array(img, dtype=np.float32)
     return img_array
 
 
 def save_image(path, img_array):
+    """Guarda imagen desde array float32 (0-255)"""
     img_array = np.clip(img_array, 0, 255)
     img = Image.fromarray(img_array.astype(np.uint8))
     img.save(path)
@@ -88,30 +90,20 @@ def save_image(path, img_array):
 
 
 def emboss_cpu(image, kernel):
-    H, W = image.shape
-    K = kernel.shape[0]
-    r = K // 2
-    output = np.zeros_like(image)
+    """Implementación CPU del filtro emboss - OPTIMIZADA con NumPy"""
+    from scipy.ndimage import convolve
 
-    for y in range(H):
-        for x in range(W):
-            sum_val = 0.0
-            for ky in range(-r, r + 1):
-                yy = y + ky
-                if yy < 0 or yy >= H:
-                    continue
-                for kx in range(-r, r + 1):
-                    xx = x + kx
-                    if xx < 0 or xx >= W:
-                        continue
-                    sum_val += image[yy, xx] * kernel[ky + r, kx + r]
+    # Usar convolución optimizada de scipy (implementada en C)
+    output = convolve(image, kernel, mode='constant', cval=0.0)
 
-            output[y, x] = sum_val + 128.0
+    # Agregar offset de 128
+    output += 128.0
 
     return output
 
 
 def emboss_gpu(image, kernel, block_config, grid_config):
+    """Implementación GPU del filtro emboss con configuración específica"""
     H, W = image.shape
     K = kernel.shape[0]
 
@@ -127,11 +119,13 @@ def emboss_gpu(image, kernel, block_config, grid_config):
     cuda.memcpy_htod(input_gpu, image)
     cuda.memcpy_htod(kernel_gpu, kernel.flatten())
 
+    # Medir tiempo
     start = cuda.Event()
     end = cuda.Event()
 
     start.record()
 
+    # Ejecutar kernel
     emboss_func(
         input_gpu, output_gpu, kernel_gpu,
         np.int32(W), np.int32(H), np.int32(K),
@@ -141,11 +135,14 @@ def emboss_gpu(image, kernel, block_config, grid_config):
     end.record()
     end.synchronize()
 
+    # Tiempo en milisegundos
     gpu_time = start.time_till(end)
 
+    # Copiar resultado de vuelta
     output = np.empty_like(image)
     cuda.memcpy_dtoh(output, output_gpu)
 
+    # Liberar memoria
     input_gpu.free()
     output_gpu.free()
     kernel_gpu.free()
@@ -154,16 +151,18 @@ def emboss_gpu(image, kernel, block_config, grid_config):
 
 
 def main():
+    # Cargar imagen
     import sys
     if len(sys.argv) < 2:
         print("Uso: python emboss_pycuda.py imagen.jpg")
         return
 
-    img_path = "img.jpg"
+    img_path = sys.argv[1]
     image = load_image_grayscale(img_path)
     H, W = image.shape
     print(f"\nImagen cargada: {img_path} ({W}x{H})")
 
+    # Tamaños de kernel a probar
     kernel_sizes = [9, 21, 65]
 
     print("\n" + "=" * 70)
@@ -173,24 +172,28 @@ def main():
     for K in kernel_sizes:
         print(f"\n--- KERNEL SIZE: {K}x{K} ---")
 
+        # Generar kernel
         kernel = generate_emboss_kernel(K)
 
+        # CPU
         print("\n🖥️  CPU:")
         start_cpu = time.time()
         output_cpu = emboss_cpu(image, kernel)
         end_cpu = time.time()
-        cpu_time = (end_cpu - start_cpu) * 1000
+        cpu_time = (end_cpu - start_cpu) * 1000  # convertir a ms
         print(f"   Tiempo: {cpu_time:.3f} ms")
 
+        # Guardar resultado CPU
         save_image(f"emboss_cpu_{K}x{K}.png", output_cpu)
 
+        # Diferentes configuraciones de grid/block
         configs = [
             # (block, grid, nombre)
-            #((16, 16, 1), ((W + 15) // 16, (H + 15) // 16, 1), "16x16 threads/block"),
-            #((32, 32, 1), ((W + 31) // 32, (H + 31) // 32, 1), "32x32 threads/block"),
-            #((8, 8, 1), ((W + 7) // 8, (H + 7) // 8, 1), "8x8 threads/block"),
-            #((64, 1, 1), ((W + 63) // 64, H, 1), "64x1 threads/block"),
-            #((1, 64, 1), (W, (H + 63) // 64, 1), "1x64 threads/block"),
+            # ((16, 16, 1), ((W + 15) // 16, (H + 15) // 16, 1), "16x16 threads/block"),
+            # ((32, 32, 1), ((W + 31) // 32, (H + 31) // 32, 1), "32x32 threads/block"),
+            # ((8, 8, 1), ((W + 7) // 8, (H + 7) // 8, 1), "8x8 threads/block"),
+            # ((64, 1, 1), ((W + 63) // 64, H, 1), "64x1 threads/block"),
+            # ((1, 64, 1), (W, (H + 63) // 64, 1), "1x64 threads/block"),
             # 12 hilos en 1 bloque - necesitas calcular cuántos bloques para cubrir la imagen
             ((12, 1, 1), ((W + 11) // 12, H, 1), "12x1 threads/block (12 hilos)"),
         ]
@@ -214,6 +217,7 @@ def main():
 
         print(f"\n   ⭐ Mejor configuración: {best_config} ({best_time:.3f} ms)")
 
+        # Guardar mejor resultado GPU
         save_image(f"emboss_gpu_{K}x{K}.png", best_output)
         print()
 
