@@ -102,6 +102,54 @@ def emboss_cpu(image, kernel):
     return output
 
 
+def emboss_cpu_manual(image, kernel):
+    """
+    Implementación CPU manual del filtro emboss.
+    Realiza la convolución directamente con bucles anidados.
+    """
+    H, W = image.shape
+    K = kernel.shape[0]  # El kernel se asume cuadrado (KxK)
+    r = K // 2  # Radio del kernel
+
+    # Crear una matriz de salida inicializada con ceros
+    output = np.zeros_like(image, dtype=np.float32)
+
+    # Iterar sobre cada píxel de la imagen de salida (y, x)
+    for y in range(H):
+        for x in range(W):
+            convolution_sum = 0.0
+
+            # Iterar sobre el kernel (ky, kx)
+            for ky in range(-r, r + 1):
+                for kx in range(-r, r + 1):
+
+                    # Calcular la posición del vecino en la imagen de entrada (yy, xx)
+                    yy = y + ky
+                    xx = x + kx
+
+                    # 1. Manejo de Bordes (Zero Padding/Modo 'constant')
+                    # Verificar si el vecino está dentro de los límites de la imagen
+                    if 0 <= yy < H and 0 <= xx < W:
+                        # Obtener el valor del píxel en la imagen de entrada
+                        pixel_val = image[yy, xx]
+
+                        # Obtener el valor del peso del kernel
+                        # (ky + r) y (kx + r) mapean la coordenada centrada (-r a r)
+                        # a la coordenada de la matriz (0 a K-1)
+                        kernel_val = kernel[ky + r, kx + r]
+
+                        # Acumular la suma ponderada
+                        convolution_sum += pixel_val * kernel_val
+
+                    # Si el vecino está fuera de los límites, se comporta como un cero
+                    # (que es la definición de 'mode=constant', cval=0.0 en scipy)
+
+            # 2. Agregar el offset de 128 (específico del filtro emboss)
+            output[y, x] = convolution_sum + 128.0
+
+    return output
+
+
 def emboss_gpu(image, kernel, block_config, grid_config):
     """Implementación GPU del filtro emboss con configuración específica"""
     H, W = image.shape
@@ -178,7 +226,8 @@ def main():
         # CPU
         print("\n🖥️  CPU:")
         start_cpu = time.time()
-        output_cpu = emboss_cpu(image, kernel)
+        #output_cpu = emboss_cpu(image, kernel)
+        output_cpu = emboss_cpu_manual(image, kernel) # <-- Nueva versión manual
         end_cpu = time.time()
         cpu_time = (end_cpu - start_cpu) * 1000  # convertir a ms
         print(f"   Tiempo: {cpu_time:.3f} ms")
